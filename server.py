@@ -295,13 +295,8 @@ def download_template():
         return jsonify({'error': f'Failed to send template: {e}'}), 500
 
 # ------------------- Run Server -------------------
-if __name__ == '__main__':
-    # Port required by Render and other PaaS platforms
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
-    app.run(debug=debug, port=port, host='0.0.0.0')
-
 from flask import Flask, jsonify
+import os
 
 app = Flask(__name__)
 
@@ -310,13 +305,12 @@ app = Flask(__name__)
 def home():
     return jsonify({"message": "Hello from Render!"})
 
-# Add more routes here as needed
+# Add more routes here
 # @app.route("/data")
 # def data():
 #     return "Some data"
 
-# This must be at the end of the file
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))  # Render will set the PORT environment variable
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5000))  # Render sets this
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(debug=debug, host="0.0.0.0", port=port)
