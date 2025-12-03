@@ -300,3 +300,23 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'
     app.run(debug=debug, port=port, host='0.0.0.0')
+
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+# Example route
+@app.route("/")
+def home():
+    return jsonify({"message": "Hello from Render!"})
+
+# Add more routes here as needed
+# @app.route("/data")
+# def data():
+#     return "Some data"
+
+# This must be at the end of the file
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 5000))  # Render will set the PORT environment variable
+    app.run(host="0.0.0.0", port=port)
