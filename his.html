@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CCSDPT HIS Program-Thailand</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f8f9fa; margin: 0; padding: 0; }
+    nav { background-color: #3399ff; padding: 10px 20px; }
+    nav a { color: white; margin-right: 20px; text-decoration: none; font-weight: bold; cursor: pointer; }
+    nav a.active { text-decoration: underline; }
+    .container { padding: 20px 30px; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    form { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 500px; }
+    label { display: block; margin-top: 10px; font-weight: bold; }
+    input, select { width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ccc; border-radius: 5px; }
+    button { margin-top: 15px; padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    #message, #downloadMessage, #serverStatus { margin-top: 20px; font-weight: bold; }
+    footer { background: #f1f1f1; color: #333; font-size: 14px; text-align: center; padding: 10px 0; }
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+</head>
+<body>
+
+<!-- HEADER WITH LOGO -->
+<header style="background-color:#007bff; color:white; padding:15px 20px; font-size:20px; font-weight:bold; text-align:center;">
+    <img src="ccsdpt.png" alt="CCSDPT Logo" style="height:50px; display:block; margin:0 auto 10px auto;">
+    Welcome to CCSDPT HIS Data Portal-Thailand
+</header>
+
+<!-- NAVIGATION -->
+<nav>
+  <a class="tab-link active" data-tab="home">Home</a>
+  <a class="tab-link" data-tab="upload">Data Upload</a>
+  <a class="tab-link" data-tab="download">Download Data</a>
+  <a class="tab-link" data-tab="templates">Templates</a>
+  <a class="tab-link" data-tab="guidelines">Guidelines</a>
+</nav>
+
+<!-- CONTAINER -->
+<div class="container">
+
+ <!-- HOME TAB -->
+<div id="home" class="tab-content active">
+
+    <!-- Full-width image -->
+    <div style="width:100%; margin-top:10px;">
+        <img src="ccsdpt.jpg" alt="CCSDPT Banner" 
+             style="width:100%; height:auto; display:block;">
+    </div>
+
+    <!-- Home page footer/info (only on Home) -->
+    <div style="text-align:center; margin-top:20px; font-size:14px; color:#333;">
+        All rights reserved © 2025 CCSDPT | About Us | Contact: his@ccsdpt.org / mobile: +66 0936 347 604
+    </div>
+
+</div>
+  <!-- Upload tab -->
+  <div id="upload" class="tab-content">
+    <h1>Data Upload</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+      <label for="shelter">Shelter:</label>
+      <select id="shelter" name="shelter" required>
+        <option value="">-- Select Shelter --</option>
+        <option value="Ban Don Yang">Ban Don Yang</option>
+        <option value="Tham Hin">Tham Hin</option>
+        <option value="Mae La">Mae La</option>
+        <option value="Umpiem">Umpiem Mai</option>
+        <option value="Nu Po">Nu Po</option>
+        <option value="Mae Ra Ma Luang">Mae Ra Ma Luang</option>
+        <option value="Mae La Oon">Mae La Oon</option>
+        <option value="Ban Mae Surin">Ban Mae Surin</option>
+        <option value="Ban Mai Nai Soi">Ban Mai Nai Soi</option>
+      </select>
+
+      <label for="dateOfRpt">Date of Report:</label>
+      <input type="date" id="dateOfRpt" name="dateOfRpt" required>
+
+      <label for="excelFile">Select Excel File:</label>
+      <input type="file" id="excelFile" name="excelFile" accept=".xlsx, .xls" required>
+
+      <button type="submit">Upload</button>
+    </form>
+
+    <div id="message"></div>
+  </div>
+
+  <!-- Download tab -->
+  <div id="download" class="tab-content">
+    <h1>Download Data</h1>
+    <form id="downloadForm">
+      <label for="downloadShelters">Select Shelters:</label>
+      <select id="downloadShelters" name="downloadShelters" multiple size="5">
+        <option value="Ban Don Yang">Ban Don Yang</option>
+        <option value="Tham Hin">Tham Hin</option>
+        <option value="Mae La">Mae La</option>
+        <option value="Umpiem">Umpiem</option>
+        <option value="Nu Po">Nu Po</option>
+        <option value="Mae Ra Ma Luang">Mae Ra Ma Luang</option>
+        <option value="Mae La Oon">Mae La Oon</option>
+        <option value="Ban Mae Surin">Ban Mae Surin</option>
+        <option value="Ban Mai Nai Soi">Ban Mai Nai Soi</option>
+      </select>
+
+      <label for="downloadDates">Select Dates:</label>
+      <input type="text" id="downloadDates" name="downloadDates" placeholder="Select one or more dates">
+
+      <button type="submit">Download Excel</button>
+    </form>
+    <div id="downloadMessage"></div>
+  </div>
+
+  <!-- Templates tab -->
+  <div id="templates" class="tab-content">
+    <h1>Templates</h1>
+    <p>Click below to download the Excel report template:</p>
+    <a id="templateLink" href="#">📥 HFTallySheet_ENv3.0.xlsx</a>
+  </div>
+
+  <div id="guidelines" class="tab-content">
+    <h1>Guidelines</h1>
+    <p>Provide documentation, instructions, or guidelines here.</p>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script>
+  // Tabs
+  const tabs = document.querySelectorAll(".tab-link");
+  const contents = document.querySelectorAll(".tab-content");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      tabs.forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const target = tab.dataset.tab;
+      contents.forEach(c => {
+        c.classList.remove("active");
+        if(c.id === target) c.classList.add("active");
+      });
+    });
+  });
+
+  // Determine server URL
+  const serverUrl = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
+
+  // Upload
+  const uploadForm = document.getElementById("uploadForm");
+  const messageDiv = document.getElementById("message");
+
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    messageDiv.style.color = "black";
+    messageDiv.textContent = "Uploading...";
+
+    const formData = new FormData(uploadForm);
+
+    try {
+      const response = await fetch(`${serverUrl}/api/upload-excel`, {
+        method: "POST",
+        body: formData
+      });
+      const result = await response.json();
+
+      if(response.ok) {
+        messageDiv.style.color = "green";
+        messageDiv.textContent = `Shelter = ${formData.get('shelter')} and Date = ${formData.get('dateOfRpt')} uploaded successfully!`;
+        uploadForm.reset();
+        console.log('Preview:', result.preview);
+      } else {
+        messageDiv.style.color = "red";
+        messageDiv.textContent = result.error || "Upload failed.";
+      }
+    } catch(err) {
+      console.error(err);
+      messageDiv.style.color = "red";
+      messageDiv.textContent = "Error connecting to server.";
+    }
+  });
+
+  // Download
+  const downloadForm = document.getElementById("downloadForm");
+  const downloadMessage = document.getElementById("downloadMessage");
+  flatpickr("#downloadDates", { mode: "multiple", dateFormat: "Y-m-d" });
+
+  downloadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const shelters = Array.from(document.getElementById("downloadShelters").selectedOptions).map(opt => opt.value);
+    const dates = document.getElementById("downloadDates").value.split(",").map(d => d.trim());
+
+    if(!shelters.length || !dates.length) {
+      alert("Please select at least one shelter and one date.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${serverUrl}/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shelters, dates })
+      });
+
+      if(!response.ok) {
+        const error = await response.json();
+        alert(error.error || "Error downloading data");
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "HISup_data.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      downloadMessage.style.color = "green";
+      downloadMessage.innerText = "Download complete!";
+    } catch(err) {
+      console.error(err);
+      downloadMessage.style.color = "red";
+      downloadMessage.innerText = "Error connecting to server.";
+    }
+  });
+
+  // Template link
+  const templateLink = document.getElementById("templateLink");
+  templateLink.href = window.location.protocol === "file:" ? "HFTallySheet_ENv3.0.xlsx" : `${serverUrl}/download-template`;
+
+  // Server status
+  const serverStatusDiv = document.createElement("div");
+  serverStatusDiv.id = "serverStatus";
+  document.body.insertBefore(serverStatusDiv, document.body.firstChild);
+
+  async function checkServer() {
+    try {
+      const response = await fetch(`${serverUrl}/ping`);
+      if (response.ok) {
+        serverStatusDiv.innerHTML = "✅ Server is running.";
+      } else {
+        throw new Error("Server not responding");
+      }
+    } catch (err) {
+      serverStatusDiv.innerHTML = `<span style="color:red;">⚠️ Server not running. Upload/Download disabled. Run server.py first.</span>`;
+      document.querySelectorAll('button, input[type="file"]').forEach(el => el.disabled = true);
+    }
+  }
+
+  if(window.location.protocol !== "file:" || navigator.onLine) checkServer();
+
+</script>
+
+</body>
+</html>
