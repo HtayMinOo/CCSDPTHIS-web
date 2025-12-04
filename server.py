@@ -12,6 +12,15 @@ DATA_FOLDER = "data"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMPLATE_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
+import traceback   # add this import so exception traces work
+
+# Ensure we have both upload/download table env vars and a TABLE_NAME fallback
+UPLOAD_TABLE = os.getenv("UPLOAD_TABLE", "Hisup")
+DOWNLOAD_TABLE = os.getenv("DOWNLOAD_TABLE", "HisupFinal")
+# Keep TABLE_NAME for code that expects it (fallback to DOWNLOAD_TABLE)
+TABLE_NAME = os.getenv("TABLE_NAME", DOWNLOAD_TABLE)
+
+
 
 # ------------------- ROUTES -------------------
 
