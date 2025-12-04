@@ -1,316 +1,172 @@
-# server.py
+from flask import Flask, request, jsonify, send_file
 import os
-import io
-import logging
-import traceback
-from datetime import date
-
 import pandas as pd
-import pyodbc
-from flask import Flask, request, jsonify, send_file, render_template, send_from_directory, abort
-from werkzeug.middleware.proxy_fix import ProxyFix
-
-# Optional CORS (only if ENABLE_CORS=1)
-try:
-    from flask_cors import CORS
-    _cors_available = True
-except Exception:
-    _cors_available = False
-
-# ------------------- App setup -------------------
-app = Flask(
-    __name__,
-    static_folder="static",
-    template_folder="templates"
-)
-
-# If behind a proxy (Render, Heroku, etc.)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-
-# Enable CORS only if explicit environment variable set (safer)
-if _cors_available and os.environ.get("ENABLE_CORS", "0") == "1":
-    CORS(app)
-    app.logger.info("CORS enabled (ENABLE_CORS=1)")
-
-# Basic logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ------------------- Configuration (use env vars) -------------------
-SQL_DRIVER = os.environ.get("SQL_DRIVER", "{ODBC Driver 18 for SQL Server}")
-SQL_SERVER = os.environ.get("SQL_SERVER", "HISCOO")
-SQL_DATABASE = os.environ.get("SQL_DATABASE", "HISVer3")
-SQL_USER = os.environ.get("SQL_USER", "sa")
-SQL_PASSWORD = os.environ.get("SQL_PASSWORD", "ccsdpt")
-# Primary table the upload endpoint writes to
-UPLOAD_TABLE = os.environ.get("UPLOAD_TABLE", "HISup")        # default from your original file
-# Default download table — can be overridden via env var
-DOWNLOAD_TABLE = os.environ.get("DOWNLOAD_TABLE", "HisupFinal")
-
-# Optional: If you want to disable encrypt on local dev, set ODBC_ENCRYPT="no"
-ODBC_ENCRYPT = os.environ.get("ODBC_ENCRYPT", "no").lower()
-TRUST_SERVER_CERT = os.environ.get("TRUST_SERVER_CERT", "yes").lower()
-
-# ------------------- DB connection helper -------------------
-def get_db_connection():
-    """
-    Returns a pyodbc connection using configured environment variables.
-    Make sure to set these in production (do not commit credentials).
-    """
-    # Build connection string
-    conn_parts = [
-        f"DRIVER={SQL_DRIVER}",
-        f"SERVER={SQL_SERVER}",
-        f"DATABASE={SQL_DATABASE}",
-        f"UID={SQL_USER}",
-        f"PWD={SQL_PASSWORD}",
-    ]
-    # Add encrypt/trust options (explicit)
-    conn_parts.append(f"Encrypt={ODBC_ENCRYPT}")
-    conn_parts.append(f"TrustServerCertificate={TRUST_SERVER_CERT}")
-
-    conn_str = ";".join(conn_parts) + ";"
-    logger.debug(f"Connecting to DB: SERVER={SQL_SERVER} DATABASE={SQL_DATABASE} USER={SQL_USER}")
-    return pyodbc.connect(conn_str, autocommit=False)
-
-# ------------------- Health endpoints -------------------
-@app.route("/ping")
-def ping():
-    return "pong", 200
-
-@app.route("/healthz")
-def healthz():
-    return jsonify({"status": "ok"}), 200
-
-# ------------------- Insert helper -------------------
-def insert_data_into_sql(df, table_name=UPLOAD_TABLE):
-    """
-    Insert dataframe into SQL Server using fast_executemany for speed.
-    Expects df to contain columns: Description, Value, Version, Shelter, DateOfRpt
-    Returns number of rows inserted (approx via cursor.rowcount).
-    """
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.fast_executemany = True
-
-        insert_sql = f"""
-            INSERT INTO {table_name} (Description, Value, Version, Shelter, DateOfRpt)
-            VALUES (?, ?, ?, ?, ?)
-        """
-
-        # Ensure correct column order and types
-        data = df[['Description', 'Value', 'Version', 'Shelter', 'DateOfRpt']].values.tolist()
-        cursor.executemany(insert_sql, data)
-        conn.commit()
-        inserted = cursor.rowcount if cursor.rowcount is not None else len(data)
-        return inserted
-    finally:
-        try:
-            if cursor:
-                cursor.close()
-        except Exception:
-            logger.exception("Error closing cursor")
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            logger.exception("Error closing connection")
-
-# ------------------- Upload Excel Endpoint -------------------
-@app.route('/api/upload-excel', methods=['POST'])
-def upload_file():
-    try:
-        # File check
-        if 'excelFile' not in request.files:
-            return jsonify({'error': 'No file uploaded. field name must be "excelFile"'}), 400
-
-        file = request.files['excelFile']
-        shelter = request.form.get('shelter')
-        date_of_rpt = request.form.get('dateOfRpt')
-
-        if not shelter or not date_of_rpt:
-            return jsonify({'error': 'Shelter and Date of Report are required.'}), 400
-
-        # Read Excel into pandas (sheet 'JSON', columns B/C/D -> index 1,2,3)
-        file_stream = io.BytesIO(file.read())
-        df = pd.read_excel(
-            file_stream,
-            sheet_name='JSON',
-            header=None,
-            skiprows=1,
-            usecols=[1, 2, 3]
-        )
-
-        if df.empty:
-            return jsonify({'error': 'No data found in Excel sheet.'}), 400
-
-        df.columns = ['Description', 'Value', 'Version']
-
-        # Clean/convert
-        df['Description'] = df['Description'].astype(str).str.strip()
-        df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
-        df['Version'] = pd.to_numeric(df['Version'], errors='coerce')
-
-        before_drop = len(df)
-        df = df.dropna(subset=['Description', 'Value', 'Version'])
-        dropped_rows = before_drop - len(df)
-
-        if df.empty:
-            return jsonify({'error': 'All rows are invalid or missing required data.'}), 400
-
-        # Add shelter and DateOfRpt
-        df['Shelter'] = shelter
-        # Ensure DateOfRpt stored as datetime.date (not pandas.Timestamp) for pyodbc compatibility
-        try:
-            dt = pd.to_datetime(date_of_rpt)
-            df['DateOfRpt'] = df.apply(lambda _: dt.date(), axis=1)
-        except Exception as e:
-            return jsonify({'error': f'Invalid date format for dateOfRpt. Use YYYY-MM-DD. Details: {e}'}), 400
-
-        logger.info("Preview before insert:\n%s", df.head(10).to_string(index=False))
-        if dropped_rows > 0:
-            logger.info("Skipped %d rows with missing or invalid data.", dropped_rows)
-
-        inserted_rows = insert_data_into_sql(df, table_name=UPLOAD_TABLE)
-
-        return jsonify({
-            'message': f'Successfully uploaded {inserted_rows} rows for shelter {shelter} on {date_of_rpt}.',
-            'skipped_rows': dropped_rows,
-            'preview': df.head(10).to_dict(orient='records')
-        }), 200
-
-    except Exception as e:
-        logger.exception("Upload failed")
-        return jsonify({'error': f'Processing failed: {e}'}), 500
-
-# ------------------- Download Endpoint -------------------
-@app.route('/download', methods=['POST'])
-def download_data():
-    try:
-        # Expect JSON body with "shelters": [...], "dates": [...]
-        if request.is_json:
-            data = request.get_json()
-        else:
-            # fallback: try form data
-            data = request.form.to_dict(flat=False)
-            # Normalize: convert single values to list if needed
-            if 'shelters' in data and isinstance(data['shelters'], str):
-                data['shelters'] = [data['shelters']]
-            if 'dates' in data and isinstance(data['dates'], str):
-                data['dates'] = [data['dates']]
-
-        shelters = data.get('shelters') or []
-        dates = data.get('dates') or []
-
-        if not shelters or not dates:
-            return jsonify({'error': 'Shelters and dates are required.'}), 400
-
-        # Normalize shelter strings
-        shelters = [str(s).strip() for s in shelters if str(s).strip()]
-
-        # Parse and normalize dates: accept many formats, convert to ISO date strings
-        try:
-            date_objects = [pd.to_datetime(d).date() for d in dates]
-        except Exception as e:
-            return jsonify({'error': f'Invalid date(s) provided. Use YYYY-MM-DD. Details: {e}'}), 400
-
-        # Build placeholders and parameters for pyodbc ('?' style)
-        placeholders_shelter = ','.join('?' for _ in shelters)
-        placeholders_date = ','.join('?' for _ in date_objects)
-
-        query = f"""
-            SELECT Description, Value, Shelter, DateOfRpt
-            FROM {DOWNLOAD_TABLE}
-            WHERE Shelter IN ({placeholders_shelter})
-              AND CAST(DateOfRpt AS DATE) IN ({placeholders_date})
-            ORDER BY Shelter, DateOfRpt
-        """
-
-        params = []
-        # Ensure order of params matches placeholders order
-        params.extend(shelters)
-        params.extend([d.isoformat() for d in date_objects])
-
-        conn = None
-        try:
-            conn = get_db_connection()
-            # pandas will pass params to the DBAPI; format uses '?' placeholders for pyodbc
-            df = pd.read_sql_query(query, conn, params=params)
-        finally:
-            if conn:
-                conn.close()
-
-        if df.empty:
-            return jsonify({'error': 'No data found for the selected filters.'}), 404
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='HISup')
-        output.seek(0)
-
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name='HISup_data.xlsx'
-        )
-
-    except Exception as e:
-        logger.exception("Download Error")
-        return jsonify({'error': f'Failed to generate download: {e}'}), 500
-
-# ------------------- Serve HTML (home) -------------------
-@app.route('/')
-def home():
-    # Prefer templates/his.html if present (so you can move his.html into templates/)
-    try:
-        # If template exists, render it (allows template features)
-        template_path = os.path.join(app.template_folder, 'his.html')
-        if os.path.exists(template_path):
-            return render_template('his.html')
-        # Fallback: return the file content from the filesystem
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'his.html')
-        if os.path.exists(html_path):
-            return open(html_path, encoding='utf-8').read()
-        # If file missing, return a clear error
-        return jsonify({'error': 'his.html not found on server.'}), 404
-    except Exception as e:
-        logger.exception("Failed to serve home page")
-        return jsonify({'error': f'Failed to serve home page: {e}'}), 500
-
-# ------------------- Template Download Endpoint -------------------
-@app.route('/download-template')
-def download_template():
-    try:
-        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'HFTallySheet_ENv3.0.xlsx')
-        logger.info("Looking for template file at: %s", file_path)
-        if not os.path.exists(file_path):
-            return jsonify({'error': f'❌ File not found at: {file_path}'}), 404
-        return send_file(file_path, as_attachment=True)
-    except Exception as e:
-        logger.exception("Template Download Error")
-        return jsonify({'error': f'Failed to send template: {e}'}), 500
-
-# ------------------- Run Server -------------------
-from flask import Flask, jsonify
-import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-# Example route
+# ------------------- CONFIG -------------------
+UPLOAD_FOLDER = "uploads"
+TEMPLATE_FOLDER = "templates"
+DATA_FOLDER = "data"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(TEMPLATE_FOLDER, exist_ok=True)
+os.makedirs(DATA_FOLDER, exist_ok=True)
+
+# ------------------- ROUTES -------------------
+
+# Serve main page
 @app.route("/")
-def home():
-    return jsonify({"message": "Hello from Render!"})
+def index():
+    return send_file("index.html")  # Make sure index.html is in the same folder as server.py
 
-# Add more routes here
-# @app.route("/data")
-# def data():
-#     return "Some data"
+# Ping route for status
+@app.route("/ping")
+def ping():
+    return "Pong", 200
 
+# Upload Excel
+@app.route("/api/upload-excel", methods=["POST"])
+def upload_excel():
+    try:
+        shelter = request.form["shelter"]
+        date_of_rpt = request.form["dateOfRpt"]
+        excel_file = request.files["excelFile"]
+
+        # Save uploaded file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"{shelter}_{date_of_rpt}_{timestamp}.xlsx"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        excel_file.save(filepath)
+
+        # Optional: preview first 5 rows
+        df = pd.read_excel(filepath)
+        preview = df.head().to_dict(orient="records")
+
+        return jsonify({"message": "Upload successful", "preview": preview})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# Download Excel filtered by shelters & dates
+# Download: query SQL table (preferred) or merge local files as fallback
+# Expects JSON POST: {"shelters":["A","B"], "dates":["2025-12-01","2025-12-02"]}
+@app.route("/download", methods=["POST"])
+def download_data():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        shelters = data.get("shelters", [])
+        dates = data.get("dates", [])
+
+        # Respect separate env var for download table if present
+        DOWNLOAD_TABLE = os.getenv("DOWNLOAD_TABLE", TABLE_NAME)
+
+        # If DB configured => query DB
+        if db_configured():
+            where_clauses = []
+            params = []
+
+            # Shelters filter
+            if shelters:
+                placeholders = ",".join(["?"] * len(shelters))
+                where_clauses.append(f"[{SHELTER_COLUMN}] IN ({placeholders})")
+                params.extend(shelters)
+
+            # Dates filter
+            if dates:
+                parsed_dates = []
+                for ds in dates:
+                    try:
+                        d = datetime.strptime(ds, "%Y-%m-%d")
+                    except Exception:
+                        d = parse_date_try(ds)
+                        if d is None:
+                            return jsonify({"error": f"Invalid date format: {ds}. Use YYYY-MM-DD"}), 400
+                    parsed_dates.append(d.date())
+
+                # Use CONVERT(date, col) so it works if DB column is datetime
+                placeholders = ",".join(["?"] * len(parsed_dates))
+                where_clauses.append(f"CONVERT(date, [{DATE_COLUMN}]) IN ({placeholders})")
+                # SQL Server accepts ISO date strings for parameters
+                params.extend([d.isoformat() for d in parsed_dates])
+
+            # Build SQL: if no filters then select entire table
+            if where_clauses:
+                where_sql = " AND ".join(where_clauses)
+                sql = f"SELECT * FROM {DOWNLOAD_TABLE} WHERE {where_sql}"
+            else:
+                sql = f"SELECT * FROM {DOWNLOAD_TABLE}"
+
+            # Execute query
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            cols = [c[0] for c in cur.description]
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            if not rows:
+                return jsonify({"error": "No data matching your filters in database"}), 404
+
+            # Build DataFrame and return Excel
+            data_rows = []
+            for r in rows:
+                row = {}
+                for i, v in enumerate(r):
+                    if isinstance(v, datetime):
+                        row[cols[i]] = v.isoformat(sep=" ")
+                    else:
+                        row[cols[i]] = v
+                data_rows.append(row)
+            out_df = pd.DataFrame(data_rows, columns=cols)
+
+            out_io = io.BytesIO()
+            with pd.ExcelWriter(out_io, engine="openpyxl") as writer:
+                out_df.to_excel(writer, index=False, sheet_name="export")
+            out_io.seek(0)
+
+            filename = f"{DOWNLOAD_TABLE}_export_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+            return send_file(out_io, download_name=filename, as_attachment=True, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # Fallback to merging local uploaded files if DB not configured
+        else:
+            all_files = [os.path.join(UPLOAD_FOLDER, f) for f in os.listdir(UPLOAD_FOLDER) if f.endswith(".xlsx")]
+            if not all_files:
+                return jsonify({"error": "No uploaded files found and DB not configured"}), 404
+            df_list = [pd.read_excel(f) for f in all_files]
+            merged_df = pd.concat(df_list, ignore_index=True)
+            if DATE_COLUMN not in merged_df.columns or SHELTER_COLUMN not in merged_df.columns:
+                return jsonify({"error": f"Local files must contain columns '{DATE_COLUMN}' and '{SHELTER_COLUMN}'"}), 400
+            merged_df[DATE_COLUMN] = pd.to_datetime(merged_df[DATE_COLUMN], errors="coerce").dt.date
+
+            filtered_df = merged_df
+            if shelters:
+                filtered_df = filtered_df[filtered_df[SHELTER_COLUMN].isin(shelters)]
+            if dates:
+                filtered_dates = [datetime.strptime(d, "%Y-%m-%d").date() for d in dates]
+                filtered_df = filtered_df[filtered_df[DATE_COLUMN].isin(filtered_dates)]
+
+            if filtered_df.empty:
+                return jsonify({"error": "No data matching your filters (local files)"}), 404
+
+            out_path = os.path.join(DATA_FOLDER, f"{DOWNLOAD_TABLE}_local_export.xlsx")
+            filtered_df.to_excel(out_path, index=False)
+            return send_file(out_path, as_attachment=True)
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        return jsonify({"error": str(e), "trace": tb}), 500
+
+
+# Download template
+@app.route("/download-template")
+def download_template():
+    template_file = os.path.join(TEMPLATE_FOLDER, "HFTallySheet_ENv3.0.xlsx")
+    if os.path.exists(template_file):
+        return send_file(template_file, as_attachment=True)
+    else:
+        return "Template not found", 404
+
+# ------------------- MAIN -------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Render sets this
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    app.run(debug=debug, host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000, debug=True)
